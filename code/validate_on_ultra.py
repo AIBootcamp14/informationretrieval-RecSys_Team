@@ -20,8 +20,7 @@ import sys
 # Import cascaded reranking strategy from cascaded_reranking_v1.py
 from cascaded_reranking_v1 import (
     cascaded_reranking_strategy,
-    embeddings_dict,
-    SMALLTALK_IDS
+    embeddings_dict
 )
 
 def load_ultra_validation(path='ultra_validation_solar.jsonl'):

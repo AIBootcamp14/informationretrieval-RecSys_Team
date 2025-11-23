@@ -2,9 +2,15 @@
 Cascaded Reranking v1: 2-Stage LLM Reranking
 - Stage 1: Top 30 → Top 10 (빠른 필터링)
 - Stage 2: Top 10 → Top 3 (정밀한 Reranking)
+- LLM 기반 일반대화 자동 분류 (하드코딩 제거)
 
 목표: "Lost in the Middle" 문제 해결하며 Recall 향상
 예상 성능: 0.81~0.82 MAP@3
+
+업데이트 (2025-11-24):
+- 하드코딩된 일반대화 ID 제거
+- LLM 기반 하이브리드 분류로 변경 (규칙 + Solar Pro)
+- 어떤 평가 데이터에도 대응 가능
 """
 
 import json
@@ -33,14 +39,75 @@ print("BGE-M3 모델 로드 중...")
 model = BGEM3FlagModel('BAAI/bge-m3', use_fp16=True)
 print("✅ BGE-M3 모델 로드 완료")
 
-# 일반 대화 ID
-SMALLTALK_IDS = {276, 261, 233, 90, 222, 235, 165, 153, 169, 141, 183}
-
 # BGE-M3 최적화 임베딩 로드
 print("\nBGE-M3 최적화 임베딩 로드 중...")
 with open('embeddings_test_bgem3_optimized.pkl', 'rb') as f:
     embeddings_dict = pickle.load(f)
 print(f"✅ {len(embeddings_dict)}개 문서 임베딩 로드 완료")
+
+def is_smalltalk(query, client=None):
+    """
+    LLM 기반 일반대화 자동 분류
+
+    하이브리드 방식:
+    1. 규칙 기반으로 명확한 케이스 먼저 처리 (빠름)
+    2. 애매한 경우만 LLM 호출 (정확함)
+
+    Returns:
+        True: 일반대화 (문서 검색 불필요)
+        False: 과학질문 (문서 검색 필요)
+    """
+    # 1단계: 규칙 기반 명확한 케이스
+
+    # 매우 짧은 문장 (5자 이하)
+    if len(query) < 5:
+        return True
+
+    # 명확한 인사 (짧은 문장 + 인사 키워드)
+    greetings = ['안녕', '반가워', '반갑', 'hi', 'hello', 'hey', '잘가', 'bye']
+    if any(word in query for word in greetings) and len(query) < 15:
+        return True
+
+    # 명확한 감정 표현 (짧은 문장 + 감정 키워드)
+    emotions = ['고마워', '감사', '수고', '미안', '죄송', '신나', '힘들', '슬프', '기뻐']
+    if any(word in query for word in emotions) and len(query) < 20:
+        return True
+
+    # 명확한 질문 마커 (과학질문일 가능성 높음)
+    question_markers = ['왜', '어떻게', '무엇', '뭐', '어디', '언제', '누구', '어느', '원리', '이유', '방법', '과정']
+    if any(marker in query for marker in question_markers):
+        return False
+
+    # 질문 부호
+    if '?' in query or '？' in query:
+        return False
+
+    # 2단계: 애매한 케이스만 LLM 호출
+    if not client:
+        # LLM이 없으면 보수적으로 과학질문으로 처리
+        return False
+
+    try:
+        prompt = f"""다음 문장이 과학/기술/지식에 대한 질문인지, 일반적인 대화(인사, 감정표현, 잡담)인지 판단하세요.
+
+문장: {query}
+
+과학질문이면 "SCIENCE", 일반대화면 "SMALLTALK"로만 답하세요."""
+
+        response = client.chat.completions.create(
+            model="solar-pro",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=10
+        )
+
+        result = response.choices[0].message.content.strip().upper()
+        return "SMALLTALK" in result
+
+    except Exception as e:
+        # LLM 호출 실패 시 보수적으로 과학질문으로 처리
+        print(f"⚠️  Smalltalk 분류 실패: {e}")
+        return False
 
 def rewrite_query_with_context(msg):
     """
@@ -423,12 +490,12 @@ def cascaded_reranking_strategy(eval_id, msg, embeddings_dict):
     2. Hybrid Search (Top 30으로 확장)
     3. Cascaded LLM Reranking (30 → 10 → 3)
     """
-    # 일반 대화는 빈 결과
-    if eval_id in SMALLTALK_IDS:
-        return []
-
     # Step 1: 쿼리 재작성
     rewritten_query = rewrite_query_with_context(msg)
+
+    # 일반 대화 자동 분류 (LLM 기반 하이브리드)
+    if is_smalltalk(rewritten_query, client):
+        return []
 
     # Step 2: Hybrid Search (Top 30으로 확장)
     hybrid_results = hybrid_search_rrf(
