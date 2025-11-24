@@ -38,9 +38,23 @@ env/
 *.swo
 *~
 
+# Archived files and experiments
+archived/
+
+# Large binary files
+*.pkl
+*.npy
+*.tar.gz
+code.tar.gz
+data.tar.gz
+
 # Output files
 sample_submission.csv
 *.csv
+!cascaded_reranking_v1_full_submission_*.csv
+
+# Logs
+*.log
 
 # OS
 .DS_Store
