@@ -473,7 +473,7 @@ if not client:
 
 **해결**:
 ```bash
-export UPSTAGE_API_KEY=up_sv4ka64IAQVM0kw07iclUbvB5ZRZe
+export UPSTAGE_API_KEY=your_upstage_api_key_here
 ```
 
 **성능 영향**:

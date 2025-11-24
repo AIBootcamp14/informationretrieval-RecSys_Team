@@ -93,7 +93,7 @@ Nori analyzer:
 **성능 영향**: +203.4% (0.2014 → 0.6111)
 
 ```bash
-export UPSTAGE_API_KEY=up_sv4ka64IAQVM0kw07iclUbvB5ZRZe
+export UPSTAGE_API_KEY=your_upstage_api_key_here
 ```
 
 #### 3. LLM 기반 Smalltalk 자동 분류 🤖

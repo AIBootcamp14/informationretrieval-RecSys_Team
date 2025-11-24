@@ -67,7 +67,7 @@ else
     # .env 파일이 없으면 생성
     cat > .env << EOF
 # Upstage API Configuration
-UPSTAGE_API_KEY=up_sv4ka64IAQVM0kw07iclUbvB5ZRZe
+UPSTAGE_API_KEY=your_upstage_api_key_here
 
 # Elasticsearch Configuration
 ELASTICSEARCH_PASSWORD=$ES_PASSWORD

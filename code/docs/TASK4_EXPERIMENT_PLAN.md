@@ -125,7 +125,7 @@ def llm_stage_filter(query, docs, top_k, stage_name):
 
 ```bash
 cd /Users/dongjunekim/dev_team/ai14/ir/code
-export UPSTAGE_API_KEY=up_sv4ka64IAQVM0kw07iclUbvB5ZRZe
+export UPSTAGE_API_KEY=your_upstage_api_key_here
 python3 auto_validate.py cascaded_reranking_v2 cascaded_reranking_strategy
 ```
 
