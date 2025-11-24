@@ -36,8 +36,8 @@ settings = {
     'similarity': {
         'custom_bm25': {
             'type': 'BM25',
-            'k1': 0.9,
-            'b': 0.5
+            'k1': 1.2,
+            'b': 0.75
         }
     }
 }
