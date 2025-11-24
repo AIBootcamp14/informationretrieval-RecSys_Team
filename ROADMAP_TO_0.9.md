@@ -284,18 +284,19 @@ prompt = f"""
 
 ## 📋 체크리스트
 
-### Phase 1: BM25 튜닝 (필수)
-- [ ] bm25_parameter_tuning.py 작성
-- [ ] Ultra Validation Set으로 평가
-- [ ] 최적 파라미터 선택 (k1, b)
-- [ ] index_documents_nori.py 업데이트
-- [ ] 전체 데이터셋 제출
+### Phase 1: BM25 튜닝 (필수) ✅ 완료
+- [x] bm25_parameter_tuning.py 작성 → `optimize_bm25.py`
+- [x] Ultra Validation Set으로 평가
+- [x] 최적 파라미터 선택 (k1, b) → **k1=0.9, b=0.5 (MAP@3 0.99)**
+- [x] index_documents_nori.py 업데이트 → **BM25 k1=0.9, b=0.5 적용 완료**
+- [x] 전체 인덱스 재생성 완료 (4272개 문서)
+- [x] 전체 데이터셋 제출 → **`cascaded_reranking_v1_full_submission_20251124_201646.csv`**
 
-### Phase 2: Hybrid Weight 최적화 (권장)
-- [ ] hybrid_weight_tuning.py 작성
-- [ ] Grid Search 실행 (alpha, rrf_k)
-- [ ] cascaded_reranking_v1.py 업데이트
-- [ ] 전체 데이터셋 제출
+### Phase 2: Hybrid Weight 최적화 (권장) ✅ 완료
+- [x] hybrid_weight_tuning.py 작성 ✅
+- [x] Grid Search 실행 (alpha, rrf_k) → **k=30 (MAP@3 0.99)**
+- [x] cascaded_reranking_v1.py 확인 → **이미 k=30 사용 중** ✅
+- [x] 전체 데이터셋 제출 → **`cascaded_reranking_v1_full_submission_20251124_201646.csv`**
 
 ### Phase 3: BGE-M3 Fine-tuning (선택)
 - [ ] create_training_data.py 작성

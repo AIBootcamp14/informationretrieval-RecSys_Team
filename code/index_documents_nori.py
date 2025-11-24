@@ -14,7 +14,7 @@ es = Elasticsearch(['http://localhost:9200'])
 print("Elasticsearch 연결 확인...")
 print(es.info())
 
-# 인덱스 설정 (nori analyzer 사용)
+# 인덱스 설정 (nori analyzer + optimized BM25)
 settings = {
     'number_of_shards': 1,
     'number_of_replicas': 0,
@@ -32,6 +32,13 @@ settings = {
                 'stoptags': ['E', 'IC', 'J', 'MAG', 'MAJ', 'MM', 'SP', 'SSC', 'SSO', 'SC', 'SE', 'XPN', 'XSA', 'XSN', 'XSV', 'UNA', 'NA', 'VSV']
             }
         }
+    },
+    'similarity': {
+        'custom_bm25': {
+            'type': 'BM25',
+            'k1': 0.9,
+            'b': 0.5
+        }
     }
 }
 
@@ -40,7 +47,8 @@ mappings = {
         'docid': {'type': 'keyword'},
         'content': {
             'type': 'text',
-            'analyzer': 'nori'
+            'analyzer': 'nori',
+            'similarity': 'custom_bm25'
         },
         'src': {'type': 'keyword'}
     }

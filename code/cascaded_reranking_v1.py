@@ -298,7 +298,7 @@ def search_bgem3_hybrid(query, embeddings_dict, top_k=20, max_length=128):
 
     return results
 
-def hybrid_search_rrf(query, embeddings_dict, top_k=30, k=60, query_max_length=128):
+def hybrid_search_rrf(query, embeddings_dict, top_k=30, k=30, query_max_length=128):
     """
     RRF로 BM25 + BGE-M3 Hybrid 결합
     top_k를 30으로 증가 (Cascaded Reranking용)
@@ -502,7 +502,7 @@ def cascaded_reranking_strategy(eval_id, msg, embeddings_dict):
         rewritten_query,
         embeddings_dict,
         top_k=30,  # ✅ 15 → 30으로 확장
-        k=60,
+        k=30,
         query_max_length=128
     )
 
