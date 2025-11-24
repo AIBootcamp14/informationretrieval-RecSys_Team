@@ -1,212 +1,183 @@
 # RAG 시스템 - Scientific Knowledge QA Competition
 
-과학 지식 질문 답변을 위한 RAG (Retrieval-Augmented Generation) 시스템입니다. Elasticsearch와 Dense Retrieval을 결합한 하이브리드 검색 방식을 사용합니다.
+과학 지식 질문 답변을 위한 RAG (Retrieval-Augmented Generation) 시스템입니다. Elasticsearch BM25와 BGE-M3 Dense Retrieval을 결합한 Cascaded Reranking 전략을 사용합니다.
 
 ## 목차
 - [프로젝트 개요](#프로젝트-개요)
+- [최고 성능 달성](#최고-성능-달성)
 - [시스템 아키텍처](#시스템-아키텍처)
-- [주요 파일 설명](#주요-파일-설명)
+- [핵심 기술 스택](#핵심-기술-스택)
 - [설치 및 실행](#설치-및-실행)
 - [성능 결과](#성능-결과)
-- [개선 히스토리](#개선-히스토리)
+- [핵심 인사이트](#핵심-인사이트)
 
 ---
 
 ## 프로젝트 개요
 
 ### 평가 지표
-- **MAP (Mean Average Precision)**: Top-3 문서 기반
-- **목표 점수**: 0.8+ (이상적으로 0.9+)
-- **현재 최고 점수**: 0.6576 (확인 필요)
-- **최근 제출 점수**: 0.63 (super_simple_submission.csv)
+- **MAP@3 (Mean Average Precision)**: Top-3 문서 기반
+- **목표 점수**: 0.9
+- **현재 최고 점수**: **0.8030** 🏆
+- **베이스라인**: 0.7848
 
 ### 데이터셋
-- **documents.jsonl**: 검색 대상 과학 문서 컬렉션
-- **eval.jsonl**: 220개 평가 쿼리 (일반 대화 포함)
+- **documents.jsonl**: 4,272개 한국어 과학 문서
+- **eval.jsonl**: 220개 평가 쿼리 (과학 질문 + 일반 대화)
+
+---
+
+## 최고 성능 달성
+
+### 🏆 cascaded_reranking_v1.py (MAP@3 0.8030)
+
+**최종 제출 파일**: `cascaded_reranking_v1_full_submission_20251124_111913.csv`
+
+```bash
+cd code
+export UPSTAGE_API_KEY=your_api_key
+python3 generate_full_submission.py
+```
+
+### 성능 지표
+
+| 지표 | 값 |
+|------|-----|
+| **MAP@3** | **0.8030** |
+| **vs Baseline** | +2.32% |
+| **총 샘플** | 220개 |
+| **결과 포함** | 202개 (91.8%) |
+| **Smalltalk** | 18개 (8.2%) |
+
+### 3가지 핵심 성공 요인
+
+#### 1. Nori Analyzer 재도입 ✨
+
+**성능 영향**: +91.4% (0.3194 → 0.6111)
+
+```python
+settings = {
+    'analysis': {
+        'analyzer': {
+            'nori': {
+                'type': 'custom',
+                'tokenizer': 'nori_tokenizer',
+                'filter': ['nori_posfilter']
+            }
+        },
+        'filter': {
+            'nori_posfilter': {
+                'type': 'nori_part_of_speech',
+                'stoptags': ['E', 'IC', 'J', 'MAG', 'MAJ', 'MM',
+                             'SP', 'SSC', 'SSO', 'SC', 'SE', 'XPN',
+                             'XSA', 'XSN', 'XSV', 'UNA', 'NA', 'VSV']
+            }
+        }
+    }
+}
+```
+
+**Nori vs Standard 비교**:
+```
+쿼리: "광합성의 원리는 무엇인가요?"
+
+Standard analyzer:
+- "광합성", "의", "원리", "는", "무엇", "인가", "요"
+
+Nori analyzer:
+- "광합성" (N), "원리" (N), "무엇" (N)
+```
+
+#### 2. API Key 설정 문제 해결 🔑
+
+**성능 영향**: +203.4% (0.2014 → 0.6111)
+
+```bash
+export UPSTAGE_API_KEY=up_sv4ka64IAQVM0kw07iclUbvB5ZRZe
+```
+
+#### 3. LLM 기반 Smalltalk 자동 분류 🤖
+
+**변경 전**: 하드코딩된 11개 ID
+**변경 후**: Hybrid 방식 (규칙 기반 90% + LLM 10%)
+
+```python
+def is_smalltalk(query, client=None):
+    """
+    하이브리드 방식:
+    1. 규칙 기반 명확한 케이스 (90% 처리, 빠름)
+    2. 애매한 경우만 LLM 호출 (10% 처리, 정확함)
+    """
+    # 1단계: 규칙 기반
+    if len(query) < 5: return True
+    if any(word in query for word in greetings): return True
+    if any(marker in query for marker in question_markers): return False
+
+    # 2단계: LLM 판단 (Solar Pro)
+    response = client.chat.completions.create(
+        model="solar-pro",
+        messages=[{"role": "user", "content": f"과학질문 vs 일반대화 판단: {query}"}],
+        temperature=0.0
+    )
+    return "SMALLTALK" in response.choices[0].message.content
+```
+
+**결과**: 18개 smalltalk 자동 감지 (기존 11개 대비 +7개)
 
 ---
 
 ## 시스템 아키텍처
 
-### Dual Index Strategy (rag_with_elasticsearch_1120.py)
+### Cascaded Reranking v1 Pipeline
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Query Input                       │
-└─────────────────┬───────────────────────────────────┘
-                  │
-                  ▼
-        ┌─────────────────┐
-        │  Smalltalk Check │ (LLM-based)
-        └────────┬─────────┘
-                 │
-        ┌────────┴────────┐
-        │                 │
-        ▼                 ▼
-   일반 대화          과학 질문
-   (TopK=0)              │
-                         │
-                  ┌──────┴──────┐
-                  │ Query Rewrite│
-                  └──────┬───────┘
-                         │
-          ┌──────────────┴──────────────┐
-          │                             │
-          ▼                             ▼
-   ┌─────────────┐            ┌─────────────┐
-   │ BM25 Search │            │Dense Search │
-   │ (Full Docs) │            │  (Chunks)   │
-   └──────┬──────┘            └──────┬──────┘
-          │                          │
-          └──────────┬───────────────┘
-                     │
-                     ▼
-              ┌──────────┐
-              │    RRF   │ (Reciprocal Rank Fusion)
-              └─────┬────┘
-                    │
-                    ▼
-             ┌──────────────┐
-             │ Adaptive TopK│
-             └──────┬───────┘
-                    │
-                    ▼
-              ┌──────────┐
-              │LLM Answer│
-              └──────────┘
+Query Input (msg)
+    ↓
+[1] Query Rewriting (Solar Pro LLM)
+    - 멀티턴 대화 맥락 통합
+    - 대명사 → 구체적 명사 변환
+    ↓
+[2] Smalltalk Classification (Hybrid)
+    - Stage 1: Rule-based (90%)
+    - Stage 2: LLM-based (10%)
+    ↓ (if SCIENCE question)
+[3] Hybrid Search (Top 30)
+    - BM25 (Nori analyzer)
+    - BGE-M3 (Dense + Sparse + ColBERT)
+    - RRF Fusion (k=60)
+    ↓
+[4] Cascaded LLM Reranking
+    - Stage 1: 30 → 10 (빠른 필터링)
+    - Stage 2: 10 → 3 (정밀한 판단)
+    ↓
+Final Top-3 Documents
 ```
-
-### 핵심 기술 스택
-- **Elasticsearch 8.x**: BM25 검색 엔진 + KNN 벡터 검색
-- **Sentence Transformers**: Dense 임베딩 (snunlp/KR-SBERT-V40K-klueNLI-augSTS)
-- **Upstage Solar Pro**: LLM 기반 답변 생성 및 Smalltalk 판별
-- **Python 3.10+**: 메인 프로그래밍 언어
 
 ---
 
-## 주요 파일 설명
+## 핵심 기술 스택
 
-### 1. rag_simplified_final.py ⭐ 추천 (NEW)
+### 검색 엔진
+- **Elasticsearch 8.x** with Nori Analyzer
+  - BM25 lexical search
+  - 한국어 형태소 분석
 
-동적 TopK 전략 - 가장 균형잡힌 버전
+### 임베딩 모델
+- **BGE-M3** (BAAI/bge-m3)
+  - Multi-representation: Dense + Sparse + ColBERT
+  - 다국어 지원
+  - 8192 토큰 컨텍스트
 
-```python
-# 실행 방법
-python3 rag_simplified_final.py
-```
+### LLM
+- **Upstage Solar Pro**
+  - Query rewriting
+  - Smalltalk classification
+  - 2-stage cascaded reranking
 
-**특징**:
-- ✅ **BM25만 사용** (복잡도 낮음, 속도 빠름)
-- ✅ **동적 TopK 전략**:
-  - max_score < 3: TopK=0
-  - max_score < 5: TopK=1
-  - max_score < 8: TopK=2
-  - max_score >= 8: TopK=3
-- ✅ **실행 시간**: 약 2초
-- ✅ **TopK 분포**: 0개(15) + 1개(1) + 2개(4) + 3개(200) = 적절한 균형
-- ⚠️ **수정 필요**: ID 30 등 9개 과학 질문이 SMALLTALK_IDS에 포함됨
-
-**결과 파일**: `simplified_submission.csv` (점수 미확인, 수정 후 재테스트 필요)
-
----
-
-### 2. rag_super_simple.py
-
-Threshold 2.0 전략 - 최대한 많은 문서 반환
-
-```python
-# 실행 방법
-python3 rag_super_simple.py
-```
-
-**특징**:
-- ✅ **BM25만 사용** (복잡도 낮음, 속도 빠름)
-- ✅ **Threshold 2.0** (관대한 필터링)
-- ✅ **실행 시간**: 약 2초
-- ✅ **실제 MAP**: 0.63
-- ✅ **TopK=3 비율**: 96.8% (213/220)
-
-**핵심 코드**:
-```python
-# 일반 대화 ID (과학 질문들 모두 제거: 30, 91, 70, 51, 60, 260, 37, 26, 265)
-CONFIRMED_SMALLTALK_IDS = {
-    276, 261, 233, 90, 222, 235, 165, 153, 169, 141, 183
-}
-
-def search(self, query: str, eval_id: int = None) -> List[str]:
-    # 1. 일반 대화는 문서 0개
-    if eval_id in CONFIRMED_SMALLTALK_IDS:
-        return []
-
-    # 2. BM25 검색
-    response = self.es.search(
-        index='test',
-        body={
-            'query': {
-                'match': {
-                    'content': {
-                        'query': query.strip(),
-                        'analyzer': 'nori'
-                    }
-                }
-            },
-            'size': 10
-        }
-    )
-
-    # 3. threshold 2.0으로 필터링
-    max_score = response['hits']['hits'][0]['_score']
-    if max_score >= 2.0:
-        return [hit['_source']['docid'] for hit in response['hits']['hits'][:3]]
-    else:
-        return []
-```
-
-**결과 파일**: `super_simple_submission.csv` (598KB)
-
----
-
-### 2. rag_with_elasticsearch_1120.py
-**Dual Index + Hybrid Search 버전**
-
-```python
-# 실행 방법
-python3 rag_with_elasticsearch_1120.py
-```
-
-**특징**:
-- 🔍 **Dual Index**: Full Document (BM25) + Chunks (Dense)
-- 🔀 **Hybrid Search**: BM25 + Dense Retrieval + RRF
-- 🤖 **LLM 기반 Smalltalk 판별**
-- 📝 **Query Rewriting**: 멀티턴 대화 처리
-- ⚠️ **실행 시간**: 약 20분 (LLM 호출 포함)
-
-**장점**:
-- 더 정확한 Smalltalk 판별 (LLM 사용)
-- Chunk 기반 검색으로 긴 문서 처리 개선
-- 멀티턴 대화 맥락 이해
-
-**단점**:
-- 느린 실행 속도 (LLM API 호출)
-- 복잡한 구조로 디버깅 어려움
-- 성능 개선 미미 (예상 MAP 0.6~0.7)
-
-**결과 파일**: `rag_1120_submission.csv`
-
----
-
-### 3. rag_with_elasticsearch_1119.py
-**초기 개선 버전 (실패)**
-
-```python
-# 실행 방법
-python3 rag_with_elasticsearch_1119.py
-```
-
-**특징**:
-- ❌ **Threshold 5.0**: 너무 높아서 False Negative 11개 발생
-- ❌ **결과**: MAP 0.5992 (baseline보다 낮음)
-- ⚠️ **교훈**: Threshold를 너무 높이면 오히려 성능 하락
+### 개발 환경
+- **Python 3.10+**
+- **Docker** for Elasticsearch
+- **Anaconda** environment
 
 ---
 
@@ -214,39 +185,34 @@ python3 rag_with_elasticsearch_1119.py
 
 ### 1. 환경 설정
 
-**현재 프로젝트는 Anaconda 환경에서 실행 중입니다.**
-
 ```bash
-# 현재 환경 정보
-Python: 3.13.5 (Anaconda)
-elasticsearch: 8.8.0
-sentence-transformers: 5.1.2
-
-# 방법 1: Anaconda 환경 사용 (현재 사용 중) ⭐ 추천
-# 별도 설치 불필요 - 이미 설치되어 있음
-
-# 방법 2: 새로운 Anaconda 환경 생성
+# Anaconda 환경 생성
 conda create -n rag python=3.10
 conda activate rag
-pip install elasticsearch sentence-transformers openai python-dotenv numpy tqdm
 
-# 방법 3: Python 가상환경 사용
-python3 -m venv venv
-source venv/bin/activate  # macOS/Linux
-# venv\Scripts\activate  # Windows
-pip install elasticsearch sentence-transformers openai python-dotenv numpy tqdm
+# 패키지 설치
+cd code
+pip install -r requirements.txt
+```
+
+**requirements.txt**:
+```
+elasticsearch>=8.8.0
+sentence-transformers>=2.2.0
+openai>=1.0.0
+python-dotenv
+numpy
+tqdm
+pandas
+FlagEmbedding
 ```
 
 ### 2. Elasticsearch 설치 및 실행
 
-**현재 프로젝트는 Docker로 Elasticsearch를 실행 중입니다.**
+#### Docker 방식 (권장)
 
 ```bash
-# 현재 상태 확인
-docker ps --filter "name=elasticsearch"
-# 결과: elasticsearch container is Up 2 days (healthy) on port 9200
-
-# Docker로 실행 (현재 사용 중) ⭐ 추천
+# Elasticsearch 실행
 docker run -d \
   --name elasticsearch \
   -p 9200:9200 \
@@ -255,209 +221,145 @@ docker run -d \
   -e "xpack.security.enabled=false" \
   docker.elastic.co/elasticsearch/elasticsearch:8.11.0
 
-# Elasticsearch 시작/중지
-docker start elasticsearch
-docker stop elasticsearch
+# Nori plugin 설치
+docker exec elasticsearch bin/elasticsearch-plugin install analysis-nori
+docker restart elasticsearch
 
 # 연결 확인
 curl http://localhost:9200
-
-# Homebrew 방식 (대안)
-brew install elasticsearch
-brew services start elasticsearch
 ```
 
-### 3. 환경 변수 설정
-
-**`.env` 파일이 이미 `/code/.env`에 존재합니다.**
+### 3. 문서 인덱싱
 
 ```bash
-# 위치: /Users/dongjunekim/dev_team/ai14/ir/code/.env
-# 현재 설정:
-# - UPSTAGE_API_KEY: 설정됨 ✅
-# - ELASTICSEARCH_PASSWORD: Docker 사용으로 불필요 (xpack.security.enabled=false)
-
-# 새 환경 구성 시 .env 파일 생성:
 cd code
-cat > .env << 'EOF'
-# Upstage API Configuration
-UPSTAGE_API_KEY=your_upstage_api_key_here
 
-# Elasticsearch (Docker 사용 시 불필요)
-# ELASTICSEARCH_PASSWORD=your_password_here
+# Nori analyzer로 인덱싱
+python3 index_documents_nori.py
+```
+
+**출력**:
+```
+✅ 인덱싱 완료!
+총 4272개 문서가 'test' 인덱스에 저장되었습니다.
+```
+
+### 4. 환경 변수 설정
+
+```bash
+# .env 파일 생성
+cat > .env << 'EOF'
+UPSTAGE_API_KEY=your_upstage_api_key_here
 EOF
 ```
 
-**Upstage API Key 발급 방법**:
-
+**Upstage API Key 발급**:
 1. [Upstage Console](https://console.upstage.ai/) 접속
 2. API Keys 메뉴에서 새 키 생성
 3. `.env` 파일에 복사
 
-### 4. 실행
-
-#### Simplified Final 버전 (추천) ⭐
+### 5. 제출 파일 생성
 
 ```bash
-cd code
-python3 rag_simplified_final.py
+export UPSTAGE_API_KEY=your_api_key
+python3 generate_full_submission.py
 ```
 
-#### Super Simple 버전
-
-```bash
-cd code
-python3 rag_super_simple.py
+**출력**:
 ```
+================================================================================
+Generating Full Submission File
+================================================================================
+Total samples: 220
+Strategy: cascaded_reranking_v1 (LLM-based smalltalk classification)
+================================================================================
 
-#### Dual Index 버전
+Processing: 100%|██████████| 220/220
 
-```bash
-cd code
-python3 rag_with_elasticsearch_1120.py
+================================================================================
+Full Submission Generated Successfully!
+================================================================================
+Output file: cascaded_reranking_v1_full_submission_20251124_111913.csv
+Total samples: 220
+Samples with results: 202
+Empty results (smalltalk): 18
+================================================================================
 ```
 
 ---
 
 ## 성능 결과
 
-### 제출 파일별 성능 비교
+### 실험 결과 요약
 
-| 파일명 | Leaderboard MAP | Validation MAP | TopK 분포 | 특징 |
-|--------|----------------|----------------|-----------|------|
-| **super_simple_submission.csv** | **0.6300** | 0.5056 | 6/1/0/213 | Threshold 2.0, 가장 안정적 ⭐ |
-| context_aware_submission.csv | **0.6220** | 0.8500 | 6/1/2/211 | 전체 멀티턴 rewrite (과잉) |
-| selective_context_submission.csv | **테스트 중** | 0.9000 | 6/1/2/211 | 선택적 rewrite (4개만) |
-| simplified_submission.csv | 미확인 | 0.4944 | 15/1/4/200 | 동적 TopK, ID 30 버그 |
-| rag_threshold3_submission.csv | 미확인 | 0.2917 | 18/25/12/165 | Threshold 3.0 |
-| rag_1119_submission.csv | 미확인 | 0.1056 | 17/0/0/203 | Hybrid Search |
-| phase3_submission.csv | 0.6000 | - | 41/0/9/170 | 초기 baseline |
+| Task | 전략 | MAP@3 | vs Baseline | 상태 |
+|------|------|-------|-------------|------|
+| - | Baseline | 0.7848 | - | 대회 기준 |
+| 3 | cascaded_reranking_v1 (Previous) | 0.7939 | +1.16% | ✅ 기존 최고 |
+| 4 | cascaded_reranking_v2 | 0.7778 | -0.89% | ❌ 실패 |
+| 5 | query_decomposition_v1 | 0.5278 | -32.74% | ❌ 실패 |
+| 6 | document_context_expansion | - | - | ⛔ 불가능 |
+| **7** | **cascaded_reranking_v1 (Final)** | **0.8030** | **+2.32%** | 🏆 **최고 성능** |
 
-### 핵심 발견
-
-**1. Validation과 Leaderboard 간 격차 존재**
-
-- `super_simple`: Validation 0.5056 → Leaderboard **0.63** (+0.12)
-- `context_aware`: Validation **0.8500** → Leaderboard **0.6220** (-0.23) ❌
-
-**교훈**: Validation set이 작아서 (20개) 실제 성능을 정확히 반영하지 못함
-
-**2. Context-Aware Query Rewriting의 위험성**
-
-- 과도한 rewriting은 BM25 점수를 오히려 낮춤
-- 166개 쿼리 변경 → 93개에서 TopK 감소
-- LLM의 장황한 설명이 검색에 방해됨
-
-**3. TopK=3 비율과 MAP 점수는 무관**
-
-- `super_simple`: TopK=3 96.8% → MAP 0.63
-- `context_aware`: TopK=3 95.9% → MAP 0.6220
-
-### TopK 분포 비교
-
-#### super_simple_submission.csv (0.63점)
+### 성능 향상 여정
 
 ```
-TopK=0:   6개 (  2.7%) ▓
-TopK=1:   1개 (  0.5%)
-TopK=2:   0개 (  0.0%)
-TopK=3: 213개 ( 96.8%) ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
+0.7848 (Baseline)
+  ↓ +1.16%
+0.7939 (cascaded_reranking_v1 Previous)
+  ↓ +1.15%
+0.8030 (cascaded_reranking_v1 Final) 🏆
 ```
 
-#### simplified_submission.csv (점수 미확인, ID 30 버그 있음)
-
-```
-TopK=0:  15개 (  6.8%) ▓▓▓
-TopK=1:   1개 (  0.5%)
-TopK=2:   4개 (  1.8%) ▓
-TopK=3: 200개 ( 90.9%) ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
-```
-
-### TopK=0 항목 (super_simple - 6개, 모두 실제 일반 대화)
-
-- ID 276: "요새 너무 힘들다."
-- ID 261: "니가 대답을 잘해줘서 너무 신나!"
-- ID 233: "남녀 관계에서 정서적인 행동이 왜 중요해?"
-- ID 90: "안녕 반갑다"
-- ID 235: "결혼 전에 성관계를 가지는 것이 괜찮다고 생각하는 사람들의 주된 특징은?"
-- ID 222: "안녕 반가워"
-
----
-
-## 개선 히스토리
-
-### Phase 1: Baseline (MAP 0.6000)
-- BM25 기본 구현
-- Simple threshold 적용
-
-### Phase 2: 실패한 과최적화 (MAP 0.5992)
-```python
-# ❌ 잘못된 접근
-- Threshold 5.0 (너무 높음)
-- Hybrid Search + RRF (복잡도만 증가)
-- Query Expansion (효과 미미)
-```
-
-**교훈**: 복잡한 시스템이 항상 좋은 것은 아니다!
-
-### Phase 3: 핵심 버그 발견 및 수정 ⭐
-**NORMAL_CHAT_IDS에 과학 질문 9개 잘못 포함**
-
-```python
-# ❌ 수정 전 (18개 TopK=0)
-CONFIRMED_SMALLTALK_IDS = {
-    276, 261, 233, 90, 222, 37, 70, 235,
-    91, 265, 26, 260, 51, 30, 60, ...
-}
-
-# ✅ 수정 후 (6개 TopK=0)
-CONFIRMED_SMALLTALK_IDS = {
-    276, 261, 233, 90, 222, 235, 165, 153, 169, 141, 183
-}
-# 제거: 30, 91, 70, 51, 60, 260, 37, 26, 265
-```
-
-**제거한 과학 질문들**:
-- ID 30: "지구에서 새로운 땅이 생겨나는 메커니즘은?"
-- ID 91: "탄소의 내부 구조를 알아낼 수 있는 방법은?"
-- ID 70: "리보오솜의 역할이 뭐야?"
-- ID 51: "초코렛이 녹는 물리적인 원리는?"
-- ID 60: "성대 주름이 긴장했는지 어떻게 알 수 있나?"
-- ID 260: "자석의 세기에 가장 큰 영향을 주는 불순물은?"
-- ID 37: "두개의 소스로부터 발생한 사건중 어떤 쪽에서 기인한 것인지 확률 계산하는..."
-- ID 26: "짚신 벌레의 번식은 어떻게 이루어지나?"
-- ID 265: "온난 전선이 발생하면 이후 날씨는 어떻게 되나?"
-
-**결과**: TopK=0 18개 → 6개 (12개 감소), TopK=3 165개 → 213개 (48개 증가)
-
-### Phase 4: Simple is Best (MAP 0.81~0.86)
-```python
-# ✅ 성공 전략
-- BM25만 사용 (Hybrid 제거)
-- Threshold 2.0 (적절한 수준)
-- 빠른 실행 속도 (2초)
-- 높은 재현성
-```
+**총 향상**: +2.32% (0.7848 → 0.8030)
 
 ---
 
 ## 핵심 인사이트
 
-### 1. Simple is Better
-복잡한 Hybrid Search보다 단순한 BM25가 더 나은 성능을 보임
+### 1. 한글 처리의 중요성
 
-### 2. Threshold의 중요성
-- Threshold 5.0: False Negative 많음 (과학 질문 누락)
-- Threshold 2.0: 적절한 균형점
-- Threshold 1.0 이하: False Positive 증가 가능성
+**Nori analyzer가 BM25 검색 품질에 결정적 영향**
 
-### 3. 데이터 품질 > 알고리즘
-NORMAL_CHAT_IDS의 잘못된 레이블링 9개를 수정하는 것이 복잡한 알고리즘보다 효과적
+- Standard analyzer: MAP@3 0.3194
+- Nori analyzer: MAP@3 0.6111
+- **개선**: +0.2917 (+91.4%)
 
-### 4. Ground Truth의 중요성
-- eval.jsonl에는 정답이 없음 (쿼리만 존재)
-- 로컬 검증 불가능 → Leaderboard 제출로만 검증 가능
-- 예측 기반 개발의 한계
+### 2. LLM 기능의 필수성
+
+**API Key 활성화 시 얻는 기능**:
+- Query rewriting (멀티턴 대화 맥락 통합)
+- Smalltalk 자동 분류
+- LLM Reranking (의미적 관련성 판단)
+
+**성능 영향**: +203.4% (0.2014 → 0.6111)
+
+### 3. Retrieval Recall이 병목
+
+**Ultra Validation Set 분석 결과** (7개 실패 케이스):
+- **Retrieval 단계 실패**: 6개 (85.7%) ← **병목**
+- Reranking 단계 실패: 1개 (14.3%)
+
+**결론**: Reranking은 이미 잘 작동하며, Retrieval 개선이 우선순위
+
+### 4. 복잡도 증가는 역효과
+
+**Task 4 (Cascaded v2)**: 3-stage reranking → 성능 하락 (-2.03%)
+**Task 5 (Query Decomposition)**: 복잡한 쿼리 분해 → 성능 폭락 (-33.52%)
+
+**교훈**: Simple is Better
+
+### 5. 자동화의 가치
+
+**하드코딩 문제점**:
+- 새로운 평가 데이터에 대응 불가
+- 수동 라벨링 필요
+- 유지보수 어려움
+
+**LLM 자동 분류 장점**:
+- 일반화 능력
+- 데이터 변경 자동 대응
+- 확장성
 
 ---
 
@@ -466,22 +368,29 @@ NORMAL_CHAT_IDS의 잘못된 레이블링 9개를 수정하는 것이 복잡한 
 ```
 ir/
 ├── code/
-│   ├── rag_simplified_final.py       ⭐ 추천 파일 (동적 TopK)
-│   ├── rag_super_simple.py           (Threshold 2.0)
-│   ├── rag_with_elasticsearch_1120.py (Dual Index)
-│   ├── rag_with_elasticsearch_1119.py (실패 버전)
-│   ├── simplified_submission.csv     ⭐ 테스트 필요 (ID 30 수정 후)
-│   ├── super_simple_submission.csv   (0.63점)
-│   ├── rag_1119_submission.csv       (점수 미확인)
-│   ├── rag_threshold3_submission.csv (점수 미확인)
-│   └── .env
+│   ├── cascaded_reranking_v1.py              🏆 최고 성능 전략
+│   ├── generate_full_submission.py           제출 파일 생성기
+│   ├── index_documents_nori.py               Nori 인덱싱
+│   ├── create_embeddings_bgem3_optimized.py  BGE-M3 임베딩
+│   ├── auto_validate.py                      자동 검증
+│   ├── cascaded_reranking_v1_full_submission_20251124_111913.csv  🏆
+│   ├── docs/                                 실험 문서 (15개)
+│   ├── archived/                             아카이브 (gitignored)
+│   │   ├── embeddings/                       대용량 임베딩 파일
+│   │   ├── submissions/                      이전 제출 파일 73개
+│   │   └── experiments/                      실패한 실험 20개
+│   ├── .env
+│   ├── .gitignore
+│   ├── requirements.txt
+│   └── EXPERIMENT_SUMMARY_20251124.md        📊 종합 실험 보고서
 ├── data/
-│   ├── documents.jsonl
-│   └── eval.jsonl
+│   ├── documents.jsonl                       4,272 문서
+│   └── eval.jsonl                            220 쿼리
 ├── docs/
 │   ├── 01.dataset.md
 │   └── 02.howtoeval.md
-└── README.md
+├── README.md                                 👈 현재 문서
+└── ROADMAP_TO_0.9.md                        🎯 다음 단계 계획
 ```
 
 ---
@@ -489,174 +398,103 @@ ir/
 ## 트러블슈팅
 
 ### Elasticsearch 연결 오류
+
 ```bash
 # Elasticsearch 실행 확인
 curl http://localhost:9200
 
-# 비밀번호 설정 (필요시)
-elasticsearch-reset-password -u elastic
+# Docker 컨테이너 상태 확인
+docker ps --filter "name=elasticsearch"
+
+# 로그 확인
+docker logs elasticsearch
 ```
 
-### 임베딩 모델 다운로드 오류
-```python
+### Nori plugin 설치 오류
+
+```bash
+# Plugin 목록 확인
+docker exec elasticsearch bin/elasticsearch-plugin list
+
+# Plugin 재설치
+docker exec elasticsearch bin/elasticsearch-plugin remove analysis-nori
+docker exec elasticsearch bin/elasticsearch-plugin install analysis-nori
+docker restart elasticsearch
+```
+
+### BGE-M3 임베딩 오류
+
+```bash
 # HuggingFace 캐시 확인
-from transformers import AutoModel
-model = AutoModel.from_pretrained("snunlp/KR-SBERT-V40K-klueNLI-augSTS")
+ls ~/.cache/huggingface/hub/
+
+# 수동 다운로드
+python3 -c "from FlagEmbedding import BGEM3FlagModel; BGEM3FlagModel('BAAI/bge-m3')"
 ```
 
 ### LLM API 오류
+
 ```bash
 # .env 파일 확인
 cat .env | grep UPSTAGE_API_KEY
 
 # API 키 테스트
 curl https://api.upstage.ai/v1/solar/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY"
+  -H "Authorization: Bearer $UPSTAGE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"solar-pro","messages":[{"role":"user","content":"안녕"}]}'
 ```
 
 ---
 
-## Validation Set 구축 전략
+## 다음 단계
 
-**문제**: `eval.jsonl`에는 정답(ground truth)이 없어서 로컬 검증 불가능
+### 단기 (1-2주)
+- **BM25 파라미터 튜닝** (k1, b 최적화)
+  - 예상 성능 향상: +2-5%
+- **Hybrid Weight 최적화** (BM25 vs BGE-M3 가중치)
+  - 예상 성능 향상: +1-3%
 
-### 전략 1: 수동 Annotation (가장 정확)
+### 중기 (3-4주)
+- **BGE-M3 Fine-tuning** (과학 도메인 특화)
+  - 예상 성능 향상: +3-7%
+- **Prompt Engineering** (Reranking prompt 최적화)
+  - 예상 성능 향상: +1-2%
 
-```bash
-python3 create_validation_set.py
-```
+### 장기 (1개월+)
+- 앙상블 방법
+- 새로운 임베딩 모델 실험
+- Semantic Chunking 재시도
 
-**방법**:
-1. `eval.jsonl`에서 20개 샘플 랜덤 추출
-2. 각 쿼리에 대해 BM25 검색 결과 표시
-3. 수동으로 정답 문서 선택
-4. `validation.jsonl` 생성
-
-**장점**: 높은 정확도
-**단점**: 시간 소요 (20개 = 약 30분)
-
----
-
-### 전략 2: Pseudo-Labeling (빠름)
-
-```bash
-python3 create_pseudo_validation.py
-```
-
-**방법**:
-
-1. BM25 최고 점수 >= 10.0인 쿼리만 선택 (high confidence)
-2. 상위 3개 문서를 정답으로 가정
-3. 신뢰도별 분류 (high/medium/low)
-4. `pseudo_validation.jsonl` 생성
-
-**장점**: 자동화, 빠름 (1분)
-**단점**: 노이즈 포함 가능
-
-**사용 예시**:
-```bash
-# Pseudo validation 생성
-python3 create_pseudo_validation.py
-
-# Submission 평가
-validator.evaluate_submission('super_simple_submission.csv', 'pseudo_validation.jsonl')
-```
-
----
-
-### 전략 3: Leaderboard Feedback (실전 추천) ⭐
-
-```bash
-# Step 1: High-impact 쿼리 식별
-python3 analyze_leaderboard_feedback.py
-
-# Step 2: Quick validation set 생성 및 평가
-python3 create_quick_validation.py
-```
-
-**방법**:
-
-1. 여러 submission의 MAP 점수 비교
-2. TopK가 크게 다른 쿼리 식별
-3. 점수 차이에 큰 영향을 미치는 쿼리 우선 레이블링
-4. `validation_candidates.json` 생성
-5. BM25 기반 pseudo-labels로 validation set 구축
-
-**장점**: 효율적 (high-impact 쿼리만 레이블링)
-
-**단점**: 최소 2개 이상의 제출 점수 필요
-
-**워크플로우**:
-
-```text
-1. 여러 버전 제출 → MAP 점수 확인
-2. analyze_leaderboard_feedback.py 실행
-3. 차이가 큰 상위 20개 쿼리 식별 (216/220개 쿼리에서 차이 발견)
-4. create_quick_validation.py로 validation set 자동 생성
-5. 로컬 검증으로 최적 submission 선택 가능!
-```
-
-**실행 결과** (20개 High-Impact 쿼리):
-
-| Submission | Validation MAP | Leaderboard MAP |
-|-----------|----------------|-----------------|
-| super_simple_submission.csv | **0.5056** | **0.63** |
-| simplified_submission.csv | 0.4944 | 미확인 |
-| rag_threshold3_submission.csv | 0.2917 | 미확인 |
-| rag_1119_submission.csv | 0.1056 | 미확인 |
-
-**핵심 발견**:
-
-- `super_simple_submission.csv`가 validation set에서도 최고 성능 (0.5056)
-- High confidence 쿼리 (12개): Avg AP 0.6019
-- Medium confidence 쿼리 (8개): Avg AP 0.3611
-- **결론**: Threshold 2.0 전략이 가장 효과적
-
----
-
-## 성능 개선 아이디어 (향후)
-
-### 1. Query Expansion
-```python
-# 동의어 확장
-"DNA" → "디옥시리보핵산", "유전자", "염색체"
-```
-
-### 2. Re-ranking
-```python
-# Cross-Encoder로 재정렬
-from sentence_transformers import CrossEncoder
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
-```
-
-### 3. Negative Feedback Learning
-```python
-# TopK=0이지만 과학 질문인 케이스 학습
-# → NORMAL_CHAT_IDS 자동 보정
-```
-
-### 4. Validation-Driven Development ⭐
-
-```python
-# Validation set으로 하이퍼파라미터 튜닝
-for threshold in [2.0, 3.0, 5.0, 8.0, 10.0]:
-    result = evaluate_on_validation(threshold)
-    print(f"Threshold {threshold}: Accuracy {result['accuracy']}")
-```
-
----
-
-## 라이센스
-MIT License
-
-## 문의
-- GitHub Issues: [링크]
-- Email: [이메일]
+**상세 계획**: [ROADMAP_TO_0.9.md](ROADMAP_TO_0.9.md)
 
 ---
 
 ## 참고 문서
+
+### 프로젝트 문서
+- [EXPERIMENT_SUMMARY_20251124.md](code/EXPERIMENT_SUMMARY_20251124.md) - 종합 실험 보고서
+- [ROADMAP_TO_0.9.md](ROADMAP_TO_0.9.md) - MAP@3 0.9 달성 로드맵
+
+### 외부 문서
 - [Elasticsearch 공식 문서](https://www.elastic.co/guide/index.html)
-- [Sentence Transformers](https://www.sbert.net/)
+- [BGE-M3 GitHub](https://github.com/FlagOpen/FlagEmbedding)
 - [Upstage Solar API](https://console.upstage.ai/)
-- [MAP 평가 지표](docs/02.howtoeval.md)
+- [Nori Analyzer](https://www.elastic.co/guide/en/elasticsearch/plugins/current/analysis-nori.html)
+
+---
+
+## 라이센스
+
+MIT License
+
+## 기여자
+
+- AI Bootcamp 14기 RecSys Team
+- Developed with Claude Code
+
+---
+
+**최종 업데이트**: 2025-11-24
+**현재 최고 성능**: MAP@3 **0.8030** 🏆
+**목표**: MAP@3 0.9

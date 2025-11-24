@@ -1,253 +1,403 @@
-# 🎯 0.9점 달성 로드맵
+# 🎯 MAP@3 0.9 달성 로드맵
 
 ## 현재 상황
-- **현재 최고 점수**: 0.63 (super_simple_submission.csv)
+
+- **현재 최고 점수**: **0.8030** 🏆
 - **목표 점수**: 0.9
-- **필요한 향상**: +0.27 (43% 성능 향상)
+- **필요한 향상**: +0.097 (+12.1%)
+- **베이스라인**: 0.7848
+
+### 성능 향상 여정
+
+```
+0.7848 (Baseline)
+  ↓ +1.16%
+0.7939 (cascaded_reranking_v1 Previous)
+  ↓ +1.15%
+0.8030 (cascaded_reranking_v1 Final) 🏆 ← 현재 위치
+  ↓ +12.1% (목표)
+0.9000 (Target) 🎯
+```
 
 ---
 
-## 📊 실패 케이스 분석 결과
+## 📊 병목 분석 결과
 
-### 발견된 문제점
+### Ultra Validation Set 실패 케이스 분석 (7개)
 
-| 문제 유형 | 개수 | BM25 Score | 심각도 |
-|----------|------|------------|--------|
-| **Context-Dependent** (멀티턴) | 3개 | 7.25~8.47 | 🔴 HIGH |
-| **Abstract** (추상적 표현) | 3개 | 7.55~9.32 | 🟡 MEDIUM |
-| **Specific Entity** (고유명사) | 1개 | 8.15 | 🟡 MEDIUM |
-| **Other** (영어 키워드) | 2개 | 8.34 | 🟡 MEDIUM |
+| 단계 | 실패 개수 | 비율 | 심각도 |
+|------|----------|------|--------|
+| **Retrieval (초기 검색)** | 6개 | 85.7% | 🔴 **HIGH** |
+| Reranking (재정렬) | 1개 | 14.3% | 🟢 LOW |
 
-**총 9개 쿼리**가 BM25 점수 10.0 미만으로 낮은 검색 성능
+**핵심 발견**:
+- **Retrieval Recall이 병목**: Top-30에 정답이 없으면 Reranking도 무용지물
+- Reranking은 이미 잘 작동 (6/7 성공률)
+- **우선순위**: Retrieval 개선 >> Reranking 개선
+
+### Retrieval 실패 사례 (6개)
+
+**패턴 분석**:
+1. **희귀 용어/고유명사**: 3개
+   - "플랑크톤의 역할", "interferon", "bridge inverter"
+2. **추상적 표현**: 2개
+   - "달이 항상 같은 면만 보이는 이유"
+3. **도메인 특화 용어**: 1개
+   - "성대 주름 긴장"
 
 ---
 
 ## 🚀 3단계 개선 전략
 
-### Phase 1: Context-Aware Search (예상 +0.15) 🔴 최우선
+### Phase 1: BM25 파라미터 튜닝 (예상 +2~5%) 🔴 최우선
 
-**문제**:
+**현재 상태**:
+```python
+# Elasticsearch 기본값 사용
+k1 = 1.2  # Term frequency saturation
+b = 0.75  # Length normalization
 ```
-이전 대화: "달을 보면 항상 같은 면만 보이더라구"
-현재 쿼리: "그 이유가 뭐야?"  ← 대명사 사용, 맥락 의존적
-→ BM25 검색 실패 (max_score: 7.25)
-```
+
+**문제점**:
+- 한국어 과학 문서는 일반 문서보다 길이 편차가 큼
+- 기본 파라미터는 영어 웹 문서에 최적화됨
 
 **해결책**:
 ```python
-# LLM으로 쿼리 재작성
-이전 맥락 + 현재 쿼리 → "달이 항상 같은 면만 보이는 이유는?"
+# Grid Search로 최적값 찾기
+for k1 in [0.8, 1.0, 1.2, 1.5, 2.0]:
+    for b in [0.0, 0.25, 0.5, 0.75, 1.0]:
+        map_score = evaluate(k1, b)
 ```
-
-**구현**:
-```bash
-python3 rag_with_context.py
-# 출력: context_aware_submission.csv
-```
-
-**영향받는 쿼리**:
-- ID 43: "그 이유가 뭐야?" (달 관련)
-- ID 44: "그 이유가 뭐야?" (독감 관련)
-- ID 97: "그럼 순기능에 대해 알려줄래?" (세균 관련)
 
 **예상 효과**:
-- 3개 쿼리의 AP가 0.0 → 0.8로 향상
-- 전체 MAP +0.10~0.15 향상
+- MAP@3 0.8030 → 0.82~0.84 (+2~5%)
+- 실행 시간: 1~2시간
+
+**구현 계획**:
+1. `bm25_parameter_tuning.py` 작성
+2. Ultra Validation Set으로 평가
+3. 최적 파라미터 선택
+4. 전체 데이터셋 제출
 
 ---
 
-### Phase 2: Query Expansion (예상 +0.05) 🟡
+### Phase 2: Hybrid Weight 최적화 (예상 +1~3%) 🟡
 
-**문제**:
+**현재 상태**:
+```python
+# RRF Fusion (k=60)
+# BM25와 BGE-M3 동등 가중치
 ```
-Query: "interferon의 역할에 대해 알려줘"
-→ 영어 키워드 "interferon"만으로 검색
-→ 한글 문서 "인터페론"과 매칭 실패
-```
+
+**문제점**:
+- BM25와 Dense의 상대적 중요도 미조정
+- RRF k 값이 최적이 아닐 수 있음
 
 **해결책**:
 ```python
-# 1. 영어 → 한글 변환
-"interferon" → "인터페론"
+# Weighted Hybrid
+final_score = alpha * bm25_score + (1-alpha) * dense_score
 
-# 2. 동의어 확장
-"역할" → "기능", "작용", "효과"
-
-# 3. 확장된 쿼리로 검색
-"인터페론 OR interferon AND (역할 OR 기능 OR 작용)"
+# Grid Search
+for alpha in [0.5, 0.6, 0.7, 0.8, 0.9]:
+    for rrf_k in [30, 60, 90, 120]:
+        map_score = evaluate(alpha, rrf_k)
 ```
 
-**영향받는 쿼리**:
-- ID 55: "interferon의 역할에 대해 알려줘"
-- ID 209: "bridge inverter의 역할에 대해 알려줘"
-- ID 280: "Dmitri Ivanovsky가 누구야?" (고유명사)
+**예상 효과**:
+- MAP@3 0.84 → 0.85~0.86 (+1~3%)
+- BM25 가중치 높일 것으로 예상 (alpha=0.7~0.8)
 
-**예상 효과**: MAP +0.03~0.05
+**구현 계획**:
+1. `hybrid_weight_tuning.py` 작성
+2. Ultra Validation Set으로 평가
+3. 최적 가중치 선택
 
 ---
 
-### Phase 3: Hybrid Search 고도화 (예상 +0.05~0.07) 🟢
+### Phase 3: BGE-M3 Fine-tuning (예상 +3~7%) 🟢
 
-**문제**:
-- 현재 BM25만 사용 (Sparse Retrieval)
-- Semantic 유사도 고려 안 함
+**현재 상태**:
+```python
+# Pre-trained BGE-M3 사용
+# 일반 도메인 학습 모델
+```
+
+**문제점**:
+- 과학 도메인 특화 학습 안 됨
+- 한국어 과학 용어 임베딩 품질 낮음
 
 **해결책**:
 ```python
-# Dense + Sparse Hybrid
-BM25 점수 (0.7) + Dense 점수 (0.3) = 최종 점수
+# 1. Pseudo-labeling으로 학습 데이터 생성
+# BM25 high-confidence 쿼리-문서 쌍 수집
+
+# 2. Contrastive Learning
+triplets = [
+    (query, positive_doc, negative_doc)
+    for each training sample
+]
+
+# 3. Fine-tuning
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('BAAI/bge-m3')
+model.fit(triplets, epochs=3)
 ```
 
-**구현**:
-1. 문서 임베딩 생성 (한 번만 실행)
-2. Query 임베딩 + Cosine Similarity
-3. RRF (Reciprocal Rank Fusion)로 결합
+**예상 효과**:
+- MAP@3 0.86 → 0.89~0.90 (+3~7%)
+- 과학 용어 임베딩 품질 대폭 향상
 
-**예상 효과**: MAP +0.05~0.07
+**구현 계획**:
+1. `create_training_data.py` - BM25 기반 pseudo-labeling
+2. `finetune_bgem3.py` - Fine-tuning
+3. `create_embeddings_finetuned.py` - 재생성
+4. 전체 데이터셋 제출
 
 ---
 
 ## 📈 예상 최종 점수
 
-| Phase | 개선 내용 | 예상 향상 | 누적 점수 |
-|-------|----------|-----------|----------|
-| **Baseline** | super_simple (Threshold 2.0) | - | 0.63 |
-| **Phase 1** | Context-Aware Search | +0.15 | **0.78** |
-| **Phase 2** | Query Expansion | +0.05 | **0.83** |
-| **Phase 3** | Hybrid Search 고도화 | +0.07 | **0.90** ✅ |
+| Phase | 개선 내용 | 예상 향상 | 누적 점수 | 난이도 |
+|-------|----------|-----------|----------|--------|
+| **현재** | cascaded_reranking_v1 Final | - | **0.8030** | - |
+| **Phase 1** | BM25 파라미터 튜닝 | +2~5% | **0.82~0.84** | 🟢 LOW |
+| **Phase 2** | Hybrid Weight 최적화 | +1~3% | **0.83~0.86** | 🟢 LOW |
+| **Phase 3** | BGE-M3 Fine-tuning | +3~7% | **0.86~0.90** ✅ | 🔴 HIGH |
 
-**총 예상 향상**: +0.27
+**총 예상 향상**: +6~15% (+0.05~0.12)
 **목표 달성 가능성**: ✅ **HIGH**
 
 ---
 
-## 🛠️ 실행 계획
+## 🛠️ 단계별 실행 계획
 
-### Step 1: Context-Aware 버전 테스트 (최우선)
+### Step 1: BM25 파라미터 튜닝 (1~2일)
 
 ```bash
 cd code
 
-# 실행
-python3 rag_with_context.py
+# 1. 튜닝 스크립트 작성
+cat > bm25_parameter_tuning.py << 'EOF'
+# Grid Search for BM25 parameters
+# Ultra Validation Set으로 평가
+EOF
 
-# Validation 평가
-python3 create_quick_validation.py  # context_aware_submission.csv 추가 평가
+# 2. 실행
+python3 bm25_parameter_tuning.py
+
+# 3. 최적 파라미터 적용
+# index_documents_nori.py 수정
 ```
 
 **기대 결과**:
-- Validation MAP: 0.5056 → 0.60+ (약 +0.10)
-- Leaderboard 제출 예상 점수: 0.78
+- 최적 k1, b 값 발견
+- Validation MAP: 0.8030 → 0.82~0.84
 
 ---
 
-### Step 2: Query Expansion 추가
+### Step 2: Hybrid Weight 최적화 (1일)
 
 ```bash
-# 구현 필요
-python3 rag_with_expansion.py
+# 1. 튜닝 스크립트 작성
+python3 hybrid_weight_tuning.py
+
+# 2. 최적 가중치 적용
+# cascaded_reranking_v1.py 수정
 ```
 
-**핵심 기능**:
-1. 영어 키워드 한글 변환
-2. 동의어 사전 구축
-3. Query Expansion
+**기대 결과**:
+- 최적 alpha, rrf_k 값 발견
+- Validation MAP: 0.84 → 0.85~0.86
 
 ---
 
-### Step 3: Hybrid Search 최적화
+### Step 3: BGE-M3 Fine-tuning (3~5일)
 
 ```bash
-# 기존 rag_with_elasticsearch_1120.py 개선
-python3 rag_hybrid_optimized.py
+# 1. 학습 데이터 생성
+python3 create_training_data.py
+# 출력: training_triplets.json (예상 1000~2000 쌍)
+
+# 2. Fine-tuning
+python3 finetune_bgem3.py
+# 소요 시간: 2~4시간 (GPU 필요)
+
+# 3. 임베딩 재생성
+python3 create_embeddings_finetuned.py
+
+# 4. 제출 파일 생성
+python3 generate_full_submission.py
 ```
 
-**개선 사항**:
-1. Dense 검색 품질 향상
-2. RRF 가중치 조정 (BM25 70%, Dense 30%)
-3. Context-Aware + Query Expansion 통합
+**기대 결과**:
+- 과학 도메인 특화 임베딩
+- Validation MAP: 0.86 → 0.89~0.90
 
 ---
 
 ## 💡 추가 최적화 아이디어
 
-### 1. Re-ranking with Cross-Encoder
+### 1. Prompt Engineering (예상 +1~2%)
+
+**현재 Reranking Prompt**:
 ```python
-# Top-10 결과를 Cross-Encoder로 재정렬
-from sentence_transformers import CrossEncoder
-reranker = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+prompt = f"""
+다음 질문에 대해 문서가 관련이 있는지 판단하세요.
+질문: {query}
+문서: {doc}
+"""
 ```
 
-**예상 효과**: +0.02~0.03
-
-### 2. Ensemble Strategy
+**개선 방향**:
 ```python
-# 여러 모델의 결과를 앙상블
-results = {
-    'context_aware': 0.78,
-    'hybrid': 0.75,
-    'expanded': 0.76
-}
-# Voting 또는 Weighted Average
-final_topk = ensemble(results)
+# 1. 과학 도메인 특화
+# 2. Few-shot examples 추가
+# 3. Chain-of-Thought reasoning
 ```
 
-**예상 효과**: +0.01~0.02
+### 2. Query Expansion (예상 +1~2%)
 
-### 3. Hard Negative Mining
 ```python
-# 잘못 검색된 케이스를 학습 데이터로 활용
-# Fine-tune Dense Retrieval 모델
+# 영어 키워드 한글 변환
+"interferon" → "인터페론"
+
+# 동의어 확장
+"역할" → ["역할", "기능", "작용", "효과"]
 ```
 
-**예상 효과**: +0.03~0.05 (장기적)
+### 3. Semantic Chunking 재시도 (예상 +2~4%)
+
+**이전 실패 원인**:
+- Task 6에서 데이터 구조 한계로 포기
+
+**새로운 접근**:
+```python
+# Chunk 단위 검색 + Full Document 재구성
+1. Chunk 검색으로 관련 문서 찾기
+2. Chunk가 속한 Full Document 반환
+3. LLM Reranking으로 정확도 향상
+```
 
 ---
 
 ## 📋 체크리스트
 
-### Phase 1 (필수)
-- [x] 실패 케이스 분석 완료 (analyze_failure_cases.py)
-- [x] Context-Aware RAG 구현 (rag_with_context.py)
-- [ ] Validation set 평가
-- [ ] Leaderboard 제출 및 점수 확인
+### Phase 1: BM25 튜닝 (필수)
+- [ ] bm25_parameter_tuning.py 작성
+- [ ] Ultra Validation Set으로 평가
+- [ ] 최적 파라미터 선택 (k1, b)
+- [ ] index_documents_nori.py 업데이트
+- [ ] 전체 데이터셋 제출
 
-### Phase 2 (권장)
-- [ ] Query Expansion 구현
-- [ ] 영어-한글 키워드 매핑 사전 구축
-- [ ] Validation set 평가
+### Phase 2: Hybrid Weight 최적화 (권장)
+- [ ] hybrid_weight_tuning.py 작성
+- [ ] Grid Search 실행 (alpha, rrf_k)
+- [ ] cascaded_reranking_v1.py 업데이트
+- [ ] 전체 데이터셋 제출
 
-### Phase 3 (선택)
-- [ ] Hybrid Search 고도화
-- [ ] RRF 가중치 최적화
-- [ ] Re-ranking 추가
+### Phase 3: BGE-M3 Fine-tuning (선택)
+- [ ] create_training_data.py 작성
+- [ ] Pseudo-labeling으로 학습 데이터 생성
+- [ ] finetune_bgem3.py 작성
+- [ ] GPU 환경 확보
+- [ ] Fine-tuning 실행 (2~4시간)
+- [ ] 임베딩 재생성
+- [ ] 전체 데이터셋 제출
+
+### 추가 최적화 (선택)
+- [ ] Prompt Engineering
+- [ ] Query Expansion
+- [ ] Semantic Chunking 재시도
 
 ---
 
 ## 🎯 핵심 메시지
 
-**0.63 → 0.9 달성은 충분히 가능합니다!**
+**0.8030 → 0.9 달성은 충분히 가능합니다!**
 
-**이유**:
-1. **Context-Dependent 쿼리 3개만 제대로 처리해도 +0.15**
-2. 현재 시스템은 단순 BM25만 사용 (개선 여지 큼)
-3. 멀티턴 대화 맥락을 전혀 활용하지 않음 (가장 큰 문제)
+### 성공 확률
 
-**성공 확률**:
-- Phase 1만 완료: **80% (0.78 달성)**
-- Phase 1+2 완료: **90% (0.83 달성)**
-- Phase 1+2+3 완료: **95% (0.90 달성)** ✅
+| 시나리오 | 예상 점수 | 확률 |
+|---------|----------|------|
+| Phase 1만 완료 | **0.82~0.84** | 90% |
+| Phase 1+2 완료 | **0.85~0.86** | 80% |
+| Phase 1+2+3 완료 | **0.89~0.90** ✅ | 70% |
+
+### 성공 요인
+
+1. **BM25 파라미터가 최적화되지 않음** (가장 쉬운 개선)
+2. **Hybrid Weight가 조정되지 않음** (빠른 개선)
+3. **BGE-M3이 과학 도메인 학습 안 됨** (큰 개선 여지)
+
+### 리스크
+
+1. **Phase 3 GPU 필요**: Colab Pro 또는 AWS 사용
+2. **Fine-tuning 실패 가능성**: Hyperparameter 조정 필요
+3. **Overfitting 위험**: Ultra Validation Set 크기 작음 (8개)
 
 ---
 
-## 📞 다음 단계
+## 📞 즉시 실행 가능한 작업
 
-**즉시 실행**:
+### 1. BM25 파라미터 튜닝 (오늘 시작 가능)
+
 ```bash
-cd /Users/dongjunekim/dev_team/ai14/ir/code
-python3 rag_with_context.py
+cd code
+python3 bm25_parameter_tuning.py
 ```
 
-**기대 결과**: 0.78점 (현재 0.63 → +0.15)
+**예상 소요 시간**: 1~2시간
+**예상 성능 향상**: +2~5% (0.8030 → 0.82~0.84)
 
-이후 Validation 평가로 검증 후 Leaderboard 제출!
+### 2. 문서 읽기
+
+**필수 문서**:
+- [EXPERIMENT_SUMMARY_20251124.md](code/EXPERIMENT_SUMMARY_20251124.md) - 전체 실험 과정
+- [code/docs/TASK5_FAILURE_ANALYSIS.md](code/docs/TASK5_FAILURE_ANALYSIS.md) - 실패 분석
+
+**참고 문서**:
+- [Elasticsearch BM25 Documentation](https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules-similarity.html)
+- [BGE-M3 Fine-tuning Guide](https://github.com/FlagOpen/FlagEmbedding/tree/master/examples/finetune)
+
+---
+
+## 🔬 실험 우선순위
+
+| 순위 | 실험 | 난이도 | 예상 향상 | ROI |
+|------|------|--------|----------|-----|
+| 1 | BM25 파라미터 튜닝 | 🟢 LOW | +2~5% | ⭐⭐⭐⭐⭐ |
+| 2 | Hybrid Weight 최적화 | 🟢 LOW | +1~3% | ⭐⭐⭐⭐ |
+| 3 | Prompt Engineering | 🟡 MED | +1~2% | ⭐⭐⭐ |
+| 4 | Query Expansion | 🟡 MED | +1~2% | ⭐⭐⭐ |
+| 5 | BGE-M3 Fine-tuning | 🔴 HIGH | +3~7% | ⭐⭐⭐⭐⭐ |
+| 6 | Semantic Chunking | 🔴 HIGH | +2~4% | ⭐⭐ |
+
+**추천 순서**: 1 → 2 → 5 (Phase 1 → 2 → 3)
+
+---
+
+## 📅 타임라인
+
+### Week 1-2 (현재)
+- [x] Task 7 완료: MAP@3 0.8030 달성
+- [x] 실험 결과 문서화
+- [x] GitHub 푸시 완료
+- [ ] BM25 파라미터 튜닝
+
+### Week 3-4
+- [ ] Hybrid Weight 최적화
+- [ ] Prompt Engineering
+- [ ] Query Expansion
+
+### Week 5-6 (선택)
+- [ ] BGE-M3 Fine-tuning
+- [ ] Semantic Chunking 재시도
+- [ ] 앙상블 방법 시도
+
+---
+
+**최종 업데이트**: 2025-11-24
+**현재 최고 성능**: MAP@3 **0.8030** 🏆
+**다음 마일스톤**: MAP@3 **0.85** (Phase 1+2 완료)
