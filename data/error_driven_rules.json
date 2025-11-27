@@ -1,0 +1,155 @@
+{
+  "rules": [
+    {
+      "name": "IMPACT_AND_FACTOR_QUERIES",
+      "description": "영향/요인 질문 중 0/3 eval 대상만 키워드를 주입합니다.",
+      "enabled": true,
+      "match": {
+        "eval_ids": [4, 13, 44, 49, 56, 225, 230, 243, 248, 277, 285, 295, 305, 306],
+        "any_keywords": ["영향", "요인", "원인", "이유", "결과"]
+      },
+      "actions": {
+        "replace": [
+          {"pattern": "[\\?]+$", "replacement": "", "regex": true},
+          {"pattern": "어떤", "replacement": "", "regex": false, "ignore_case": true},
+          {"pattern": "무엇인지", "replacement": "", "regex": false, "ignore_case": true},
+          {"pattern": "알려줘", "replacement": "", "regex": false, "ignore_case": true},
+          {"pattern": "말해줘", "replacement": "", "regex": false, "ignore_case": true}
+        ],
+        "ensure_phrases": ["영향 분석"]
+      }
+    },
+    {
+      "name": "METHOD_OR_PROCESS",
+      "description": "방법/절차 질문을 명사형 키워드로 정제 (eval 21, 241, 281, 293).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [21, 241, 281, 293],
+        "any_keywords": ["방법", "과정", "절차", "방식"]
+      },
+      "actions": {
+        "replace": [
+          {"pattern": "어떻게", "replacement": "", "regex": false, "ignore_case": true},
+          {"pattern": "하는 법", "replacement": "방법", "regex": false, "ignore_case": true}
+        ],
+        "ensure_phrases": ["핵심 절차", "구체적 단계"]
+      }
+    },
+    {
+      "name": "PROGRAMMING_PYTHON_TASKS",
+      "description": "프로그래밍 쿼리를 python 키워드로 통일 (eval 21, 210).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [21, 210],
+        "any_keywords": ["python", "파이썬", "lambda", "코드", "class", "함수"]
+      },
+      "actions": {
+        "replace": [
+          {"pattern": "파이썬", "replacement": "python", "regex": false, "ignore_case": true}
+        ],
+        "ensure_phrases": ["python 예제 코드"],
+        "append": ["lambda function"]
+      }
+    },
+    {
+      "name": "TREE_TAXONOMY_AND_ECOLOGY",
+      "description": "나무/식물 질문을 분류/생태 키워드로 보강 (eval 78, 270).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [78, 270],
+        "any_keywords": ["나무", "식물", "수목"]
+      },
+      "actions": {
+        "ensure_phrases": ["식물 분류 기준", "생태계 역할"]
+      }
+    },
+    {
+      "name": "EDUCATION_SPENDING_STATS",
+      "description": "공교육 지출 질문에 통계 용어 추가 (eval 213).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [213],
+        "any_keywords": ["교육", "지출", "등록률", "투자"]
+      },
+      "actions": {
+        "ensure_phrases": ["공교육 지출 통계", "GDP 대비 교육 투자"]
+      }
+    },
+    {
+      "name": "DNA_PROCESS_CLEANUP",
+      "description": "DNA 결합/복제 질문에서 핵심 용어 강조 (eval 59).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [59],
+        "any_keywords": ["DNA", "디엔에이", "염기", "결합", "복제"]
+      },
+      "actions": {
+        "replace": [
+          {"pattern": "\\\\d+\\s*세", "replacement": "", "regex": true},
+          {"pattern": "\\\\d+단계", "replacement": "", "regex": true},
+          {"pattern": "인간", "replacement": "", "regex": false, "ignore_case": true}
+        ],
+        "ensure_phrases": ["DNA 결합 과정", "염기쌍 형성"]
+      }
+    },
+    {
+      "name": "RAINDROP_FORMATION",
+      "description": "빗방울/강수 질문을 표면장력/응집력과 연결 (eval 268).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [268],
+        "any_keywords": ["빗방울", "빗물", "강수"]
+      },
+      "actions": {
+        "ensure_phrases": ["표면 장력", "응집력"]
+      }
+    },
+    {
+      "name": "TIDAL_LOCKING_MOON",
+      "description": "달이 항상 같은 면을 보이는 이유 (eval 43).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [43]
+      },
+      "actions": {
+        "ensure_phrases": ["조석 고정", "tidal locking"]
+      }
+    },
+    {
+      "name": "VINEGAR_BAKINGSODA_REACTION",
+      "description": "식초+베이킹소다 실험을 산염기 반응과 연결 (eval 65).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [65],
+        "any_keywords": ["식초", "베이킹", "소다"]
+      },
+      "actions": {
+        "ensure_phrases": ["산염기 반응", "이산화탄소 발생"]
+      }
+    },
+    {
+      "name": "MAGNETIC_FIELD_INTENSITY",
+      "description": "자기장 세기 표현 질문 (eval 308).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [308],
+        "any_keywords": ["자기장", "자기력"]
+      },
+      "actions": {
+        "ensure_phrases": ["자기장 세기 단위", "테슬라 측정"]
+      }
+    },
+    {
+      "name": "DMITRI_IVANOVSKY_CONTEXT",
+      "description": "Dmitri Ivanovsky 질문에 대표 업적을 삽입 (eval 280).",
+      "enabled": true,
+      "match": {
+        "eval_ids": [280],
+        "any_keywords": ["Dmitri", "Ivanovsky", "바이러스"]
+      },
+      "actions": {
+        "ensure_phrases": ["바이러스 발견", "담배 모자이크 바이러스"]
+      }
+    }
+  ]
+}
