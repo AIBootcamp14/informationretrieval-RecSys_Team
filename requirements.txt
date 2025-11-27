@@ -1,0 +1,68 @@
+# Core dependencies
+python>=3.9
+
+# Deep Learning & Transformers
+torch>=2.0.0
+transformers>=4.30.0
+sentence-transformers>=2.2.0
+
+# Information Retrieval
+whoosh>=2.7.4
+numpy>=1.24.0
+
+# Text Processing
+kss>=4.5.0  # Korean sentence splitter
+
+# LLM & API
+openai>=1.0.0
+
+# Utilities
+loguru>=0.7.0
+diskcache>=5.6.0
+python-dotenv>=1.0.0
+
+# NEW: Required for chunk-level reranking
+# These are needed for the new chunk_reranker.py module
+# torch and transformers are already listed above
+
+# Optional but recommended for GPU acceleration:
+# Install PyTorch with CUDA support using:
+# pip install torch --index-url https://download.pytorch.org/whl/cu118
+# or for CUDA 12.1:
+# pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+# Notes:
+# 1. Chunk Reranker Module (src/chunk_reranker.py)
+#    - Uses BAAI/bge-reranker-v2-m3 or dragonkue/bge-reranker-v2-m3-ko
+#    - Requires torch and transformers (already listed)
+#    - GPU strongly recommended for performance
+#
+# 2. Character N-gram Support (local_retriever.py)
+#    - No additional dependencies required
+#    - Uses existing whoosh library
+#
+# 3. Configuration
+#    - Edit config/config.py to adjust:
+#      * USE_CHUNK_RERANKING (default: True)
+#      * CHUNK_RERANKER_MODEL (default: BAAI/bge-reranker-v2-m3)
+#      * CHUNK_RERANKER_DEVICE (default: cuda)
+#      * USE_CHAR_NGRAM (default: True)
+#
+# 4. Memory Requirements
+#    - BGE-M3 embedder: ~2GB GPU memory
+#    - BGE-reranker-v2-m3: ~1GB GPU memory
+#    - Total recommended GPU memory: 4GB+
+#
+# 5. Installation Steps
+#    pip install -r requirements.txt
+#
+#    For GPU support (recommended):
+#    pip install torch --index-url https://download.pytorch.org/whl/cu118
+#
+# 6. Troubleshooting
+#    - If GPU out of memory, reduce batch sizes in config.py:
+#      * EMBEDDING_BATCH_SIZE (default: 256)
+#      * CHUNK_RERANKER_BATCH_SIZE (default: 32)
+#    - If no GPU available, set device to 'cpu' in config.py:
+#      * EMBEDDING_DEVICE = "cpu"
+#      * CHUNK_RERANKER_DEVICE = "cpu"
